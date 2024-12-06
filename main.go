@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"io"
 	"log"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 )
 
 type Respond struct {
@@ -21,6 +23,7 @@ type Respond struct {
 }
 
 type Proxy struct {
+	ID            string `json:"id"`
 	Remark        string `json:"remark"`        // 描述
 	Prefix        string `json:"prefix"`        // 转发的前缀判断
 	Upstream      string `json:"upstream"`      // 后端nginx或ip地址
@@ -28,9 +31,10 @@ type Proxy struct {
 }
 
 var (
-	InfoLog  *log.Logger
-	ErrorLog *log.Logger
-	proxyMap = make(map[string]Proxy)
+	InfoLog    *log.Logger
+	ErrorLog   *log.Logger
+	proxyMap   = make(map[string]Proxy)
+	proxyMutex sync.RWMutex // 定义读写锁
 )
 
 var adminUrl = flag.String("adminUrl", "", "admin 的地址")
@@ -72,19 +76,125 @@ func initProxyList() {
 }
 
 func main() {
-	router := gin.Default() //创建一个router
+	router := gin.Default()
 	flag.Parse()
 	initLog()
-	if *profile != "" {
-		InfoLog.Printf("加载远端数据: %s ", *adminUrl)
-		initProxyList()
-	} else {
-		InfoLog.Printf("加载本地配置数据: %s", *proxyFile)
-		loadProxyListFromFile()
+
+	//if *profile != "" {
+	//	InfoLog.Printf("加载远端数据: %s ", *adminUrl)
+	//	initProxyList()
+	//} else {
+	//	InfoLog.Printf("加载本地配置数据: %s", *proxyFile)
+	//	loadProxyListFromFile()
+	//}
+
+	// 注册路由管理API
+	api := router.Group("/api")
+	{
+		api.POST("/routes", addRoute)
+		api.PUT("/routes/:id", updateRoute)
+		api.DELETE("/routes/:id", deleteRoute)
+		api.GET("/routes", listRoutes)
+		api.GET("/routes/:id", getRoute)
 	}
-	router.Any("/*action", Forward) //所有请求都会经过Forward函数转发
+
+	router.NoRoute(Forward) // 使用 NoRoute 替代 Any("/*action", Forward)
 
 	router.Run(":8000")
+}
+
+func addRoute(c *gin.Context) {
+	var newProxy Proxy
+	if err := c.ShouldBindJSON(&newProxy); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+		return
+	}
+
+	// Generate a unique ID for the new route (using uuid or incrementing integer)
+	newProxy.ID = uuid.New().String()
+
+	// Ensure the prefix starts with a slash
+	if !strings.HasPrefix(newProxy.Prefix, "/") {
+		newProxy.Prefix = "/" + newProxy.Prefix
+	}
+
+	proxyMutex.Lock()
+	defer proxyMutex.Unlock()
+	proxyMap[newProxy.Prefix] = newProxy
+
+	c.JSON(http.StatusCreated, newProxy)
+}
+
+func updateRoute(c *gin.Context) {
+	id := c.Param("id")
+	var updatedProxy Proxy
+	if err := c.ShouldBindJSON(&updatedProxy); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+		return
+	}
+
+	updatedProxy.ID = id
+
+	// Ensure the prefix starts with a slash
+	if !strings.HasPrefix(updatedProxy.Prefix, "/") {
+		updatedProxy.Prefix = "/" + updatedProxy.Prefix
+	}
+
+	proxyMutex.Lock()
+	defer proxyMutex.Unlock()
+	if _, exists := proxyMap[updatedProxy.Prefix]; !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Route not found"})
+		return
+	}
+
+	proxyMap[updatedProxy.Prefix] = updatedProxy
+
+	c.JSON(http.StatusOK, updatedProxy)
+}
+
+func deleteRoute(c *gin.Context) {
+	id := c.Param("id")
+
+	proxyMutex.Lock()
+	defer proxyMutex.Unlock()
+	for prefix, proxy := range proxyMap {
+		if proxy.ID == id {
+			delete(proxyMap, prefix)
+			c.JSON(http.StatusOK, gin.H{"message": "Route deleted"})
+			return
+		}
+	}
+
+	c.JSON(http.StatusNotFound, gin.H{"error": "Route not found"})
+}
+
+func listRoutes(c *gin.Context) {
+	proxyMutex.RLock()
+	defer proxyMutex.RUnlock()
+
+	// Convert map to slice for JSON serialization
+	var proxies []Proxy
+	for _, proxy := range proxyMap {
+		proxies = append(proxies, proxy)
+	}
+
+	c.JSON(http.StatusOK, proxies)
+}
+
+func getRoute(c *gin.Context) {
+	id := c.Param("id")
+
+	proxyMutex.RLock()
+	defer proxyMutex.RUnlock()
+
+	for _, proxy := range proxyMap {
+		if proxy.ID == id {
+			c.JSON(http.StatusOK, proxy)
+			return
+		}
+	}
+
+	c.JSON(http.StatusNotFound, gin.H{"error": "Route not found"})
 }
 
 func Forward(c *gin.Context) {
