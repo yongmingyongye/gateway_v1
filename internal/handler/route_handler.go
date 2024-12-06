@@ -21,10 +21,10 @@ func AddRoute(c *gin.Context) {
 		return
 	}
 
-	// 为新路由生成唯一ID
+	// Generate a unique ID for the new route
 	newProxy.ID = util.GenerateUUID()
 
-	// 确保前缀以斜线开头
+	// Ensure the prefix starts with a slash
 	if !strings.HasPrefix(newProxy.Prefix, "/") {
 		newProxy.Prefix = "/" + newProxy.Prefix
 	}
@@ -47,7 +47,7 @@ func UpdateRoute(c *gin.Context) {
 
 	updatedProxy.ID = id
 
-	// 确保前缀以斜线开头
+	// Ensure the prefix starts with a slash
 	if !strings.HasPrefix(updatedProxy.Prefix, "/") {
 		updatedProxy.Prefix = "/" + updatedProxy.Prefix
 	}
@@ -98,37 +98,31 @@ func HostReverseProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 从内存里面获取转发的url
-	var upstream = ""
-	for prefix, proxy := range service.ProxyMap {
-		if strings.HasPrefix(r.URL.Path, prefix) {
-			upstream = proxy.Upstream
-			rewritePrefix := proxy.RewritePrefix
-
-			// 如果转发的地址是 / 结尾，需要过滤掉
-			if strings.HasSuffix(upstream, "/") {
-				upstream = strings.TrimRight(upstream, "/")
-			}
-
-			// 如果 rewritePrefix 不为空，替换原路径的前缀
-			if rewritePrefix != "" {
-				r.URL.Path = strings.TrimPrefix(r.URL.Path, prefix)
-				if !strings.HasPrefix(rewritePrefix, "/") {
-					rewritePrefix = "/" + rewritePrefix
-				}
-				r.URL.Path = rewritePrefix + r.URL.Path
-			} else {
-				// 如果 rewritePrefix 为空，则保持原来的路径
-				r.URL.Path = strings.TrimPrefix(r.URL.Path, prefix)
-			}
-
-			break
-		}
-	}
-
-	if upstream == "" {
+	// 从服务层获取转发的url
+	proxy, exists := service.GetProxyByPrefix(r.URL.Path)
+	if !exists {
 		http.Error(w, "Not Found", http.StatusNotFound)
 		return
+	}
+
+	upstream := proxy.Upstream
+	rewritePrefix := proxy.RewritePrefix
+
+	// 如果转发的地址是 / 结尾，需要过滤掉
+	if strings.HasSuffix(upstream, "/") {
+		upstream = strings.TrimRight(upstream, "/")
+	}
+
+	// 如果 rewritePrefix 不为空，替换原路径的前缀
+	if rewritePrefix != "" {
+		r.URL.Path = strings.TrimPrefix(r.URL.Path, proxy.Prefix)
+		if !strings.HasPrefix(rewritePrefix, "/") {
+			rewritePrefix = "/" + rewritePrefix
+		}
+		r.URL.Path = rewritePrefix + r.URL.Path
+	} else {
+		// 如果 rewritePrefix 为空，则保持原来的路径
+		r.URL.Path = strings.TrimPrefix(r.URL.Path, proxy.Prefix)
 	}
 
 	remote, err := url.Parse(upstream)

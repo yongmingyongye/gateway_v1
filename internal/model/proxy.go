@@ -1,15 +1,23 @@
 package model
 
-type Respond struct {
-	Success bool    `json:"success"`
-	Status  string  `json:"status"`
-	Data    []Proxy `json:"data"`
-}
+import (
+	"time"
+)
 
 type Proxy struct {
-	ID            string `json:"id"`
-	Remark        string `json:"remark"`        // 描述
-	Prefix        string `json:"prefix"`        // 转发的前缀判断
-	Upstream      string `json:"upstream"`      // 后端nginx或ip地址
-	RewritePrefix string `json:"rewritePrefix"` // 重写
+	ID            string    `gorm:"primaryKey;type:varchar(36)" json:"id"`
+	Remark        string    `json:"remark"`
+	Prefix        string    `gorm:"uniqueIndex;not null" json:"prefix"`
+	Upstream      string    `json:"upstream"`
+	RewritePrefix string    `json:"rewritePrefix"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type Respond struct {
+	Data []Proxy `json:"data"`
+}
+
+func (p *Proxy) TableName() string {
+	return "proxies"
 }

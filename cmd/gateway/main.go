@@ -7,6 +7,7 @@ import (
 
 	"gateway/internal/config"
 	"gateway/internal/handler"
+	"gateway/internal/service"
 	"gateway/pkg/logger"
 	"github.com/gin-gonic/gin"
 )
@@ -20,6 +21,11 @@ func main() {
 
 	// 初始化日志
 	logger.InitLogger()
+
+	// 加载持久化的路由信息
+	if err := service.LoadProxiesFromMySQL(); err != nil {
+		log.Fatalf("Failed to load proxies from MySQL: %v", err)
+	}
 
 	// 创建 Gin 路由
 	router := gin.Default()
@@ -41,7 +47,7 @@ func main() {
 	router.NoRoute(handler.Forward)
 
 	// 启动服务器
-	port := ":8000"
+	port := ":" + config.Cfg.Port
 	fmt.Printf("Starting server on port %s\n", port)
 	if err := router.Run(port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
